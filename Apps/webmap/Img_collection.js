@@ -147,7 +147,7 @@ function findAllAssetsWithCode(basePath, selectedBand, shacCode) {
   return link;
 }
 
-exports.collection = function(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s) {
+exports.collection = function(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s,shacAssetIndex) {
   
   var link_name;
   var imageIds;
@@ -177,16 +177,22 @@ exports.collection = function(basePath, selectedSHAC, selectedBand,exceptions,cl
   var shacCode = SHAC_Dict[shpSHAC];
   
   if (!shacCode) {
-    //print("No se encontró código para el SHAC: " + shpSHAC);
     return link;
   }
   
-  // Buscar todos los archivos con este código (puede haber múltiples: _1, _2, etc.)
-  link = findAllAssetsWithCode(basePath, selectedBand, shacCode);
-  
-  if (link.length === 0) {
-    //print("no existe el archivo para SHAC: " + shpSHAC + " con código: " + shacCode);
+  // Use pre-computed asset index if available (avoids checkImageExistence calls)
+  if (shacAssetIndex) {
+    var codeNum = shacCode.replace('SHAC_', '');
+    if (shacAssetIndex[codeNum] && shacAssetIndex[codeNum][selectedBand]) {
+      return shacAssetIndex[codeNum][selectedBand].map(function(path) {
+        return ee.FeatureCollection(path);
+      });
+    }
+    return link;
   }
+  
+  // Fallback: buscar todos los archivos con este código
+  link = findAllAssetsWithCode(basePath, selectedBand, shacCode);
   
   return link;
 };

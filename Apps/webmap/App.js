@@ -25,34 +25,18 @@ var cat_frut = Rcat_frut.style(s.catFrutStyle);
 
 var c = {}; // Define a JSON object for storing UI components.
 var disp_year = init.getTemp();
-// Crear items para los selectores con labels con guión y values con guión bajo
-var disp_year_items = disp_year.map(function(year) {
-  return {
-    label: year.replace(/_/g, '-'),  // Mostrar con guión: "2019-2020"
-    value: year  // Valor con guión bajo: "2019_2020"
-  };
-});
-
-// Obtener temporadas para superficie regada histórica desde AR_Segmentacion
 var disp_year_hist = init.getTempHist();
-// Crear items para el selector histórico
-var disp_year_items_hist = disp_year_hist.map(function(year) {
-  return {
-    label: year.replace(/_/g, '-'),  // Mostrar con guión: "2019-2020"
-    value: year  // Valor con guión bajo: "2019_2020"
-  };
-});
 var exceptions = init.getExceptions();
 var claves = Object.keys(exceptions);
 var maxLengthExceptions = init.getMaxLength();
 var shac_names = init.shac_names.sort().getInfo();
 var listAssets  = init.listAsset;
+var shacCodeToPeriods = init.getShacCodeToPeriods();
+var shacAssetIndex = init.getShacAssetIndex();
 var basePath = init.getBasePath();
-print(basePath)
 
 var tablaArea = null; //tabla para almacenar estadisticas por SHAC
 var ClaseStyles = init.ClaseStyles;
-var loadedSeasons = {};
 uso_suelo = uso_suelo.map(function(feature) {
   return feature.set('style', ClaseStyles.get(feature.get('clase')));
 });
@@ -97,7 +81,6 @@ function formatSHACForDisplay(shacName) {
 // Función helper para agregar capas de superficie regada (evita duplicación)
 function addSurfaceRegadaLayers(newlink, selectedBand, styleType, layerOffset, labelOffset, c, s) {
   if(newlink.length > 0){
-    loadedSeasons[selectedBand] = true;
     for(var i = 0; i < newlink.length; i++){
       //1. Agregar layer
       var styledFC = newlink[i].style(s.seasonStyles[styleType]);
@@ -247,9 +230,7 @@ c.selectSHAC.selector = ui.Select({
   items: shac_names,
   placeholder: 'Seleccione un SHAC',
   onChange: function(selectedSHAC) {
-    loadedSeasons = {};
     c.selectSHAC.warning.setValue('');
-
 
     // 0. Reiniciar etiquetas 
     resetLabels();
@@ -267,26 +248,13 @@ c.selectSHAC.selector = ui.Select({
       c.historica.selector.setDisabled(false);
       c.historica.selector.setValue(null);
       
-      /*
-      c.checkboxesBand.selectors.map(function(checkbox) {
-        checkbox.setDisabled(true);
-        checkbox.setValue(false);
-      });
-      */
-      
       // 2. Eliminar capas highlighted y de Superficie Regada
       var layers = c.map.layers();
       for (var i = 0; i < layers.length(); i++) {
         var layer = layers.get(i);
         var layerName = layer.getName();
         
-        // Eliminar capas de superficie regada (excepto la histórica)
-        if (layerName.indexOf('Superficie regada') !== -1 && 
-            layerName !== 'Superficie regada histórica') {
-          c.map.remove(layer);
-          i--;
-        }
-        if (layerName === 'Superficie regada histórica') {
+        if (layerName.indexOf('Superficie regada') !== -1) {
           c.map.remove(layer);
           i--;
         }
@@ -315,102 +283,43 @@ c.selectSHAC.selector = ui.Select({
       c.historica.boton.setDisabled(true);
       c.historica.boton.setLabel('Agregar sup. regada historica');
       
+      // 5. Use pre-computed index for instant client-side lookup (no server round-trip)
+      var shpSHAC = selectedSHAC.replace(/\s*-\s*/g, ' ').split(' ').join('_');
+      var shacCode = ImgClass.SHAC_Dict[shpSHAC];
+      var codeNum = shacCode ? shacCode.replace('SHAC_', '') : null;
+      var generatedYears = codeNum ? (shacCodeToPeriods[codeNum] || []) : [];
       
-      //5. Estadisticas SHAC
-      if(selectedSHAC !== null){
-        var shpSHAC = selectedSHAC.replace(/\s*-\s*/g, ' ').split(' ').join('_');
-        var shacCode = ImgClass.SHAC_Dict[shpSHAC];
-        
-        if (!shacCode) {
-
-          tablaArea = ee.FeatureCollection([]);
-        } else {
-          var assetList = ee.data.listAssets(basePath).assets;
-          assetList = ee.List(assetList.map(function(asset){
-            return ee.String(asset.id);
-          }));
-          
-          // Buscar assets que contengan el código del SHAC
-          var generatedYears = assetList.map(function(link) {
-            link = ee.String(link);
-            
-            // Extract the last part of the asset name
-            var assetName = ee.String(link.split('/').get(-1));  // e.g., "2020_2021_SHAC_390" o "2020_2021_SHAC_390_1"
-          
-            // Check if asset name contains the SHAC code (después de _SHAC_)
-            var shacPart = ee.String(assetName.split('_SHAC_').get(1));  // e.g., "390" o "390_1"
-            var yearPart = ee.String(assetName.split('_SHAC_').get(0));  // e.g., "2020_2021"
-            
-            // El código del SHAC es "SHAC_390", necesitamos extraer solo "390"
-            // shacCode es un string de JavaScript, necesitamos convertirlo a ee.String primero
-            var shacCodeStr = ee.String(shacCode);
-            var shacCodeNum = ee.String(shacCodeStr.split('_').get(-1));  // Extraer "390" de "SHAC_390"
-            var shacPartBase = ee.String(shacPart.split('_').get(0));  // Extraer "390" de "390_1" o mantener "390"
-            
-            var matches = shacPartBase.equals(shacCodeNum);
-          
-            return ee.Algorithms.If(matches, yearPart, null);
-          }).filter(ee.Filter.notNull(['item'])).distinct().getInfo();
-          
-
-          if (generatedYears.length > 0) {
-            // Crear features para cada período encontrado
-            // Necesitamos sumar las áreas de todos los archivos con el mismo código (_1, _2, etc.)
-            var featuresConArea = generatedYears.map(function(periodo) {
-              // El código del SHAC ya incluye "SHAC_", así que solo concatenamos
-              // Formato: periodo_SHAC_codigo (ej: "2019_2020_SHAC_262")
-              var assetCollections = ImgClass.collection(basePath, selectedSHAC, periodo, exceptions, claves, c, s);
-              var areaHa = ee.Number(0);
-
-              if (assetCollections && assetCollections.length > 0) {
-                for (var j = 0; j < assetCollections.length; j++) {
-                  var fc = ee.FeatureCollection(assetCollections[j]);
-                  areaHa = areaHa.add(ee.Number(fc.geometry().area()).divide(10000));
-                }
-              }
-              
-              return ee.Feature(null, {
-                periodo: periodo,
-                area_ha: areaHa 
-              });
+      // 6. Estadisticas y gráfico de sup. regada por temporada
+      if (generatedYears.length > 0) {
+        var periodsMap = shacAssetIndex[codeNum] || {};
+        var featuresConArea = generatedYears.map(function(periodo) {
+          var assetPaths = periodsMap[periodo] || [];
+          if (assetPaths.length === 1) {
+            return ee.Feature(null, {
+              periodo: periodo,
+              area_ha: ee.Number(ee.FeatureCollection(assetPaths[0]).geometry().area()).divide(10000)
             });
-        
-            // Crea tu "DataFrame" como FeatureCollection
-            tablaArea = ee.FeatureCollection(featuresConArea);
-          } else {
-            tablaArea = ee.FeatureCollection([]);
           }
-        }
-      } else {
-        // Si selectedSHAC es null, inicializar tablaArea como vacío
-        tablaArea = ee.FeatureCollection([]);
-      }
-  
-   // 5. Agregar grafico de sup. regada por temporada
-      
-      // Verificar que tablaArea existe antes de crear el gráfico
-      if (tablaArea) {
-        // 5.2 Llamo al módulo chartUtils y obtengo el widget
-        // Usar el nombre normalizado del SHAC para el gráfico
-        var chartWidget = chartUtils.chartArea(shpSHAC, tablaArea);
-        
-        // Verificar si es un gráfico (tiene el método setOptions) o un label
-        // Los gráficos tienen métodos como setOptions, los labels no
+          var merged = ee.FeatureCollection(assetPaths[0]);
+          for (var j = 1; j < assetPaths.length; j++) {
+            merged = merged.merge(ee.FeatureCollection(assetPaths[j]));
+          }
+          return ee.Feature(null, {
+            periodo: periodo,
+            area_ha: ee.Number(merged.geometry().area()).divide(10000)
+          });
+        });
+        tablaArea = ee.FeatureCollection(featuresConArea);
+
+        var newChart = chartUtils.chartArea(shpSHAC, tablaArea);
         try {
-          if (chartWidget && typeof chartWidget.setOptions === 'function') {
-            // Es un gráfico, aplicar estilo
-            chartWidget.style().set(s.styleChartArea);
+          if (newChart && typeof newChart.setOptions === 'function') {
+            newChart.style().set(s.styleChartArea);
           }
-          // Si es un label, ya tiene su propio estilo definido en chartUtils
-        } catch (e) {
-          // Si hay algún error, continuar de todas formas
-        }
-        
-        // Actualizar el contenedor con el widget (gráfico o mensaje)
-        c.chart.container.widgets().reset([chartWidget]);
+        } catch (e) {}
+        c.chart.container.widgets().reset([newChart]);
         c.chart.chartPanel.style().set('shown', true);
       } else {
-        // Si tablaArea es null, ocultar el panel del gráfico
         c.chart.chartPanel.style().set('shown', false);
       }
   
@@ -480,19 +389,15 @@ c.selectSHAC.aboutLabel = ui.Label(
 c.selectBand = {};
 
 c.selectBand.selector1 = ui.Select({
-  items: disp_year_items,
+  items: disp_year,
   placeholder: 'Seleccione una temporada',
   onChange: function(selectedBand) {
     var selectedSHAC = c.selectSHAC.selector.getValue();
     if (selectedBand) {
-      if (loadedSeasons[selectedBand]) {
-        c.selectSHAC.warning.setValue('La temporada ' + formatSeasonForDisplay(selectedBand) + ' ya está cargada.');
-        return;
-      }
-      c.selectSHAC.warning.setValue('');
 
       // 0. Reiniciar etiquetas
-      var newlink = ImgClass.collection(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s);
+      resetLabels();
+      var newlink = ImgClass.collection(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s,shacAssetIndex);
       var layer2 = c.map.layers().get(2);
       if(layer2){
         if(layer2.getName() === 'SHAC seleccionado') {
@@ -512,19 +417,15 @@ c.selectBand.selector1 = ui.Select({
 
 
 c.selectBand.selector2 = ui.Select({
-  items: disp_year_items,
+  items: disp_year,
   placeholder: 'Seleccione una temporada',
   onChange: function(selectedBand) {
     var selectedSHAC = c.selectSHAC.selector.getValue();
     if (selectedBand) {
-      if (loadedSeasons[selectedBand]) {
-        c.selectSHAC.warning.setValue('La temporada ' + formatSeasonForDisplay(selectedBand) + ' ya está cargada.');
-        return;
-      }
-      c.selectSHAC.warning.setValue('');
 
       // 0. Reiniciar etiquetas
-      var newlink = ImgClass.collection(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s);
+      resetLabels();
+      var newlink = ImgClass.collection(basePath, selectedSHAC, selectedBand,exceptions,claves,c,s,shacAssetIndex);
       var layer2 = c.map.layers().get(2);
       if(layer2){
         if(layer2.getName() === 'SHAC seleccionado') {
@@ -684,7 +585,7 @@ c.historica.info = ui.Label('Información desarrollada por CIREN' +
 ' a partir de información satelital y encuestas en terreno. '+
 'Debe seleccionar un SHAC para comenzar. Disponible hasta la temporada 2022_2023');
 c.historica.selector = ui.Select({
-  items: disp_year_items_hist,
+  items: disp_year_hist,
   disabled: true,
   placeholder: 'Seleccione una temporada',
   onChange: function(selectedBand) {
@@ -709,21 +610,32 @@ c.historica.boton = ui.Button({
   onClick: function () {
     var currentLabel = c.historica.boton.getLabel();
     var selectedSHAC = c.selectSHAC.selector.getValue();
-    //print('selectedSHAC SRH', selectedSHAC);
-    var selectedBand = c.historica.selector.getValue();
-    //print('selectedBand SRH', selectedBand);
-    var newlink = ImgClass.histCollection(selectedSHAC, selectedBand, exceptions, claves, c, s);
-    //print('newLink', newlink);
+    
     if (currentLabel == 'Agregar sup. regada historica') {
-      if (newlink.length > 0) {
-        for (var i = 0; i < newlink.length; i++) {
-          // 1. Agregar layer
-          var layer = ui.Map.Layer(newlink[i], visParamsHist, 'Superficie regada histórica');
-          c.map.layers().insert(i + 2, layer);
+      // Load only the most recent available historical season
+      var historicalSeasons = disp_year_hist.slice().reverse(); // Order from newest to oldest
+      var layerAdded = false;
+      
+      // Try each historical season until we find one that exists
+      for (var si = 0; si < historicalSeasons.length; si++) {
+        var season = historicalSeasons[si];
+        var newlink = ImgClass.histCollection(selectedSHAC, season, exceptions, claves, c, s);
+        
+        if (newlink.length > 0) {
+          // Add only the first available season's layers and then break
+          for (var i = 0; i < newlink.length; i++) {
+            var layer = ui.Map.Layer(newlink[i], visParamsHist, 'Superficie regada histórica');
+            c.map.layers().insert(i + 2, layer);
+          }
+          layerAdded = true;
+          break; // IMPORTANT: Stop after finding the first available season
         }
+      }
+      
+      if (layerAdded) {
         c.historica.boton.setLabel('Quitar sup. regada historica');
-      }else{
-        c.historica.warning.setValue('No existe imagen para SHAC seleccionado');
+      } else {
+        c.historica.warning.setValue('No hay datos históricos disponibles para este SHAC');
       }
       
     } else {
@@ -733,11 +645,11 @@ c.historica.boton = ui.Button({
         var layerU = layers.get(j);
         
         if (layerU.getName() ==='Superficie regada histórica') {
-          layers.remove(layerU); // Eliminar la capa
+          layers.remove(layerU);
         }
       }
 
-      // Restablecer el botón al estado inicial
+      c.historica.warning.setValue('');
       c.historica.boton.setLabel('Agregar sup. regada historica');
     }
   },
