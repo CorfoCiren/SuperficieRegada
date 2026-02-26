@@ -14,8 +14,57 @@ var temp_disp_hist = []; // Temporadas para superficie regada histórica
 var acui_names = [];
 var repetido = [];
 
+// Import SHAC_Dict to create reverse mapping
+var ImgCollection = require('users/corfobbppciren2024/App_SR_User:Img_collection');
+var SHAC_Dict = ImgCollection.SHAC_Dict;
 
-exports.shac_names = shac_layer.aggregate_array('SHAC');
+// Create reverse mapping: SHAC_code -> display_name
+var reverseShacDict = {};
+for (var displayName in SHAC_Dict) {
+  var shacCode = SHAC_Dict[displayName];
+  reverseShacDict[shacCode] = displayName;
+}
+
+// Get SHAC names from geometry
+var shac_names = shac_layer.aggregate_array('SHAC');
+var shac_names_info = shac_names.getInfo();
+var shac_codes_set = {};
+
+// Create a set of SHAC codes that are in the geometry for quick lookup
+// by matching display names with SHAC_Dict keys
+for (var i = 0; i < shac_names_info.length; i++) {
+  var displayNameFromGeom = shac_names_info[i];
+  // Convert spaces to underscores to match SHAC_Dict keys
+  var dictKey = displayNameFromGeom.replace(/\s+/g, '_');
+  var shacCode = SHAC_Dict[dictKey];
+  if (shacCode) {
+    shac_codes_set[shacCode] = true;
+  }
+}
+
+// Scan assets for additional SHACs not in geometry
+var missing_shacs = [];
+var seen_codes = {};
+for (var i = 0; i < listAssets.length; i++) {
+  var input = listAssets[i].id.split('/')[4];
+  var match = input.match(/(\d{4})_(\d{4})_SHAC_(.*)/);
+  if (match) {
+    var codeNum = match[3];  // e.g., "NN2", "055", etc.
+    var shacCode = 'SHAC_' + codeNum;
+    // Check if this code is not already in geometry and has a reverse mapping
+    if (!shac_codes_set[shacCode] && !seen_codes[shacCode] && reverseShacDict[shacCode]) {
+      var displayName = reverseShacDict[shacCode].replace(/_/g, ' ');
+      missing_shacs.push(displayName);
+      seen_codes[shacCode] = true;
+    }
+  }
+}
+
+// Combine geometry SHACs with missing SHACs from assets
+var all_shac_names = shac_names_info.concat(missing_shacs).sort();
+
+// Convert back to Earth Engine List for compatibility with downstream code
+exports.shac_names = ee.List(all_shac_names);
 
 exports.ClaseStyles = ee.Dictionary({
   'AREAS ARTIFICIALES': {color: '#FF5733'}, // Orange Red

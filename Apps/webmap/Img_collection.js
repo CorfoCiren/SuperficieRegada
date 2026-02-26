@@ -220,7 +220,7 @@ exports.histCollection = function(selectedSHAC, selectedBand,exceptions,claves,c
     return link;
   }
 
-  var shpSHAC = [selectedSHAC.replace(/\s*-\s*/g, ' ').split(' ').join('_')];
+  var shpSHAC = selectedSHAC.replace(/\s*-\s*/g, ' ').split(' ').join('_');
 
   
   //1.2. Formar el nombre completo

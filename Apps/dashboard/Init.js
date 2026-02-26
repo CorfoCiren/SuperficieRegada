@@ -6,6 +6,16 @@ var temp_disp = [];
 
 // Build asset name index while parsing (reuse the single listAssets call)
 var assetNameIndex = {};
+// Structured index: { shacCode: { temporada: [fullPath, ...] } }
+// Groups split files (e.g. SHAC_331_1, SHAC_331_2) under base code "331"
+var shacAssetIndex = {};
+
+// Pre-build a set of valid SHAC codes (without the "SHAC_" prefix) for split detection
+var _validCodes = {};
+for (var _k in exports.SHAC_Dict) {
+  var _v = exports.SHAC_Dict[_k];
+  if (_v !== '') _validCodes[_v.replace('SHAC_', '')] = true;
+}
 
 for(var i = 0; i < listAssets.length; i++){
   var idn = listAssets[i].id;
@@ -18,6 +28,22 @@ for(var i = 0; i < listAssets.length; i++){
   var assetFileName = input;
   assetNameIndex[assetFileName] = idn;
   
+  // Determine base SHAC code (handle split files like 331_1 → 331)
+  var rawCode = match[3]; // e.g. "055", "NN2", "331_1"
+  var baseCode = rawCode;
+  if (!_validCodes[rawCode]) {
+    // Try stripping trailing _N split suffix
+    var splitMatch = rawCode.match(/^(.+?)_(\d+)$/);
+    if (splitMatch && _validCodes[splitMatch[1]]) {
+      baseCode = splitMatch[1]; // e.g. "331"
+    }
+  }
+  
+  // Group into structured index
+  if (!shacAssetIndex[baseCode]) shacAssetIndex[baseCode] = {};
+  if (!shacAssetIndex[baseCode][temp]) shacAssetIndex[baseCode][temp] = [];
+  shacAssetIndex[baseCode][temp].push(idn);
+  
   if(temp !== temp_disp[temp_disp.length -1]){
       temp_disp.push(temp);
   }
@@ -25,6 +51,10 @@ for(var i = 0; i < listAssets.length; i++){
 
 exports.getAssetNameIndex = function(){
   return assetNameIndex;
+};
+
+exports.getShacAssetIndex = function(){
+  return shacAssetIndex;
 };
 
 exports.getTemp = function(){
